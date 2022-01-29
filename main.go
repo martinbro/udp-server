@@ -190,22 +190,3 @@ func setupUDP(con myConn, url string) {
 		}
 	}
 }
-
-// //EXPRIMENTELT
-// type myConn1 struct {
-// 	ch            chan []byte
-// 	rate          chan int64
-// 	msg           chan []byte
-// 	dublex        bool
-// 	ws            *websocket.Conn
-// 	err           error
-// 	remoteAddress *net.UDPAddr //adresse til skib
-// 	serverconn    *net.UDPAddr //forbindelse mellem server og skib
-
-// }
-
-// //Metode
-// func (c *myConn1) getWebsocket(w http.ResponseWriter, r *http.Request) {
-// 	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
-// 	c.ws, c.err = upgrader.Upgrade(w, r, nil) //returnerer en upgradet sucket
-// }
