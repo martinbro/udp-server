@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -14,13 +13,16 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// remoteAddress ligger som global variabel
+var remoteAddress *net.UDPAddr
+
 type myConn struct {
-	ch            chan []byte
-	rate          chan int64
-	msg           chan []byte
-	dublex        bool
-	remoteAddress *net.UDPAddr //adresse til skib
-	serverconn    *net.UDPAddr //forbindelse mellem server og skib
+	ch     chan []byte
+	rate   chan int64
+	msg    chan []byte
+	dublex bool
+	// remoteAddress *net.UDPAddr //adresse til skib
+	// serverconn    *net.UDPAddr //forbindelse mellem server og skib
 }
 
 func (c myConn) handler(w http.ResponseWriter, r *http.Request) {
@@ -31,16 +33,20 @@ func (c myConn) handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//spinder er gorutine op, der skriver til en websocket (app´en)
 	go func(ws *websocket.Conn) {
+
 		for {
 			q := <-c.ch
 			if err := ws.WriteMessage(1, q); err != nil {
 				fmt.Fprintln(os.Stderr, "Fejl i writer: ", err)
-				os.Exit(1)
+				return
 			}
 		}
 	}(ws)
+
 	if c.dublex {
+		//spinder er gorutine op, der læser fra en websocket (app´en)
 		go func(ws *websocket.Conn, c myConn) {
 			for {
 				messageType, p, err := ws.ReadMessage()
@@ -71,6 +77,8 @@ func (c myConn) handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	fs := http.FileServer(http.Dir("./public"))
+	http.Handle("/", fs)
 	//initialiser chan
 	bno := myConn{ch: make(chan []byte), msg: make(chan []byte), rate: make(chan int64)}
 	gps := myConn{ch: make(chan []byte), msg: make(chan []byte)}
@@ -90,10 +98,10 @@ func main() {
 	fmt.Println("Følg linket (Alt + click):", "http://192.168.137.1:8000")
 	// //Midlertidig testing
 	// go varierRate(bno.rate)
-	bno.rate <- 50 //Default
+	bno.rate <- 20 //Default
 
+	Openbrowser("http://192.168.137.1:8000")
 	http.ListenAndServe("192.168.137.1:8000", nil) //Blocking call
-	//Openbrowser("https://www.bzarg.com/p/how-a-kalman-filter-works-in-pictures/")
 }
 
 var upgrader = websocket.Upgrader{
@@ -103,20 +111,20 @@ var upgrader = websocket.Upgrader{
 
 //Etablerer "BNO"-data forbindelsen fra server til Dashboard
 
-func sendBesked(ch chan string) {
-	for {
-		time.Sleep(2 * time.Second)
-		ch <- "besked"
-	}
-}
+// func sendBesked(ch chan string) {
+// 	for {
+// 		time.Sleep(2 * time.Second)
+// 		ch <- "besked"
+// 	}
+// }
 
-func varierRate(rate chan int64) {
-	for {
-		speed := rand.Int63n(900) + 1
-		rate <- speed
-		time.Sleep(2 * time.Second)
-	}
-}
+// func varierRate(rate chan int64) {
+// 	for {
+// 		speed := rand.Int63n(900) + 1
+// 		rate <- speed
+// 		time.Sleep(2 * time.Second)
+// 	}
+// }
 
 func newConn(s string) *net.UDPConn {
 	//Forbinder til UDP-socket
@@ -127,6 +135,7 @@ func newConn(s string) *net.UDPConn {
 		scanner := bufio.NewScanner(os.Stdin)
 		scanner.Scan()
 	}
+	remoteAddress = udpAddr
 	return serverConn
 }
 
@@ -138,13 +147,17 @@ func setupUDP(con myConn, url string) {
 	//Initialiserer
 	var rateVal int64 = 10
 	t0 := time.Now()
-	buffer := make([]byte, 50)
+	buffer := make([]byte, 50) //NB 50 tegn i buffer
 	i := 0
 
 	for { //starter i en uendelig løkke
-		n, remoteAddress, err := serverConn.ReadFromUDP(buffer)
+		_, remoteAdd, err := serverConn.ReadFromUDP(buffer)
+		// n, remoteAdd, err := serverConn.ReadFromUDP(buffer)
 		if err != nil {
-			println("FEJL", err)
+			println("FEJL i ", err)
+		}
+		if remoteAddress != remoteAdd {
+			remoteAddress = remoteAdd
 		}
 		select {
 		case r := <-con.rate:
@@ -156,12 +169,12 @@ func setupUDP(con myConn, url string) {
 		}
 		if time.Since(t0) > time.Duration(rateVal*int64(time.Millisecond)) {
 			t0 = time.Now()
-			navn := string(buffer[0:3])
+			// navn := string(buffer[0:3])
 
 			// fmt.Printf("\nClient: %s - %s - %d", navn, buffer, n)
-			if navn == "pin" {
-				fmt.Printf("\nClient: %s - %s - %d - %s", navn, buffer, n, remoteAddress)
-			}
+			// if navn == "pin" {
+			// 	fmt.Printf("\nClient: %s - %s - %d - %s", navn, buffer, n, remoteAddress)
+			// }
 			select {
 			case con.ch <- buffer:
 
@@ -170,10 +183,29 @@ func setupUDP(con myConn, url string) {
 		}
 		i++
 		if i%10 == 0 {
-			// print("+")
+			print("+")
 		} else {
-			// print(".")
+			print(".")
 
 		}
 	}
 }
+
+// //EXPRIMENTELT
+// type myConn1 struct {
+// 	ch            chan []byte
+// 	rate          chan int64
+// 	msg           chan []byte
+// 	dublex        bool
+// 	ws            *websocket.Conn
+// 	err           error
+// 	remoteAddress *net.UDPAddr //adresse til skib
+// 	serverconn    *net.UDPAddr //forbindelse mellem server og skib
+
+// }
+
+// //Metode
+// func (c *myConn1) getWebsocket(w http.ResponseWriter, r *http.Request) {
+// 	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
+// 	c.ws, c.err = upgrader.Upgrade(w, r, nil) //returnerer en upgradet sucket
+// }
