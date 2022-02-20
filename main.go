@@ -58,7 +58,7 @@ func (c myConn) handler(w http.ResponseWriter, r *http.Request) {
 				if messageType == websocket.TextMessage {
 					label := string(p[0:5])
 					s := string(p[5:])
-					fmt.Printf("TextMessage: %s %s %s\n", p, s, label)
+					// fmt.Printf("TextMessage: %s %s %s %s\n", p, s, label, c)
 					switch label {
 					case "esp;b":
 						if data, err := strconv.Atoi(s); err == nil {
@@ -80,9 +80,10 @@ func main() {
 	fs := http.FileServer(http.Dir("./public"))
 	http.Handle("/", fs)
 	//initialiser chan
-	bno := myConn{ch: make(chan []byte), msg: make(chan []byte), rate: make(chan int64)}
+	bno := myConn{ch: make(chan []byte), msg: make(chan []byte), rate: make(chan int64), dublex: true}
+	ror := myConn{ch: make(chan []byte), msg: make(chan []byte), rate: make(chan int64)}
 	gps := myConn{ch: make(chan []byte), msg: make(chan []byte)}
-	ws2 := myConn{ch: make(chan []byte), msg: make(chan []byte), rate: bno.rate, dublex: true}
+	ws2 := myConn{ch: make(chan []byte), msg: make(chan []byte), rate: make(chan int64)}
 
 	fmt.Println("bno", bno.rate)
 	fmt.Println("gps", gps.rate)
@@ -90,15 +91,16 @@ func main() {
 	go setupUDP(bno, "192.168.137.1:8081")
 	go setupUDP(gps, "192.168.137.1:8082")
 	go setupUDP(ws2, "192.168.137.1:8083")
+	go setupUDP(ror, "192.168.137.1:8084")
 
 	http.HandleFunc("/ws1bno", bno.handler)
+	http.HandleFunc("/ws1ror", ror.handler)
 	http.HandleFunc("/ws1gps", gps.handler)
-	http.HandleFunc("/ws2", ws2.handler)
+	http.HandleFunc("/ws2", bno.handler) //ws2.handler)
 
 	fmt.Println("Følg linket (Alt + click):", "http://192.168.137.1:8000")
-	// //Midlertidig testing
-	// go varierRate(bno.rate)
-	bno.rate <- 20 //Default
+	bno.rate <- 10 //Default
+	// ws2.rate <- 20 //Default
 
 	Openbrowser("http://192.168.137.1:8000")
 	http.ListenAndServe("192.168.137.1:8000", nil) //Blocking call
@@ -108,23 +110,6 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 }
-
-//Etablerer "BNO"-data forbindelsen fra server til Dashboard
-
-// func sendBesked(ch chan string) {
-// 	for {
-// 		time.Sleep(2 * time.Second)
-// 		ch <- "besked"
-// 	}
-// }
-
-// func varierRate(rate chan int64) {
-// 	for {
-// 		speed := rand.Int63n(900) + 1
-// 		rate <- speed
-// 		time.Sleep(2 * time.Second)
-// 	}
-// }
 
 func newConn(s string) *net.UDPConn {
 	//Forbinder til UDP-socket
@@ -143,11 +128,11 @@ func setupUDP(con myConn, url string) {
 
 	serverConn := newConn(url)
 	defer serverConn.Close()
-
+	fmt.Println("serverconn:", serverConn.LocalAddr().String())
 	//Initialiserer
 	var rateVal int64 = 10
 	t0 := time.Now()
-	buffer := make([]byte, 50) //NB 50 tegn i buffer
+	buffer := make([]byte, 60) //NB 50 tegn i buffer
 	i := 0
 
 	for { //starter i en uendelig løkke
@@ -159,25 +144,25 @@ func setupUDP(con myConn, url string) {
 		if remoteAddress != remoteAdd {
 			remoteAddress = remoteAdd
 		}
-		select {
-		case r := <-con.rate:
-			rateVal = r
-		case msg := <-con.msg:
-			fmt.Println("Sender beskeden!")
-			serverConn.WriteToUDP(msg, remoteAddress)
-		default:
-		}
+
 		if time.Since(t0) > time.Duration(rateVal*int64(time.Millisecond)) {
 			t0 = time.Now()
-			// navn := string(buffer[0:3])
+			navn := string(buffer[0:3])
 
-			// fmt.Printf("\nClient: %s - %s - %d", navn, buffer, n)
-			// if navn == "pin" {
-			// 	fmt.Printf("\nClient: %s - %s - %d - %s", navn, buffer, n, remoteAddress)
-			// }
+			// fmt.Printf("\nClient: %s - %s ", navn, buffer)
+			if navn == "gps" {
+				fmt.Printf("\nClient: %s", buffer)
+			}
 			select {
 			case con.ch <- buffer:
-
+			default:
+			}
+			select {
+			case r := <-con.rate:
+				rateVal = r
+			case msg := <-con.msg:
+				fmt.Printf("Sender beskeden! %s\n", msg)
+				serverConn.WriteToUDP(msg, remoteAddress)
 			default:
 			}
 		}
